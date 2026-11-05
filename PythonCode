@@ -1,0 +1,31 @@
+# ==============================================================================
+# 1: INICIALIZACIÓN DEL ENTORNO
+# ==============================================================================
+import os
+import pandas as pd
+import numpy as np
+import tensorflow as tf
+import sys
+
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, Flatten, Dense, AvgPool2D, MaxPool2D, GlobalAveragePooling2D
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.optimizers import Adam
+
+print("Versión de TensorFlow instalada:", tf.__version__)
+print("Dispositivos GPU disponibles:", tf.config.list_physical_devices('GPU'))
+
+
+csv_path = '/datasets/faces/labels.csv'
+
+try:
+    labels = pd.read_csv(csv_path)
+    print("¡Dataset 'labels' cargado con éxito total!")
+    print(labels.head())
+except FileNotFoundError:
+    # Interrumpimos el buffer inmediatamente para evitar errores en cascada abajo
+    sys.exit(f"🚨 ERROR CRÍTICO: No se encontró el archivo en {csv_path}. Deteniendo ejecución.")
+
+#Importación del motor de ejecución: Cargué las librerías esenciales para manipulación de datos (pandas, numpy) y el ecosistema de Deep Learning (TensorFlow/Keras), asegurándome con los comandos print finales de que el sistema reconozca la GPU para acelerar el entrenamiento.
+Carga de datos: Importé el archivo de etiquetas labels.csv dentro de un bloque de control try/except. Si la ruta del archivo es correcta, los metadatos se cargan en la variable labels. Si el archivo falta, el comando sys.exit() frena la ejecución en seco de inmediato, evitando que el notebook siga corriendo a ciegas y genere errores en cascada en las celdas inferiores.
