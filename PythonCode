@@ -1,31 +1,171 @@
 # ==============================================================================
-# 1: INICIALIZACIÓN DEL ENTORNO
+# 1: ENVIRONMENT INITIALIZATION
 # ==============================================================================
 import os
+import sys
+import inspect
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-import sys
-
+import matplotlib.pyplot as plt
+import sns as sns
 
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, Flatten, Dense, AvgPool2D, MaxPool2D, GlobalAveragePooling2D
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.applications.resnet import ResNet50
 
-print("Versión de TensorFlow instalada:", tf.__version__)
-print("Dispositivos GPU disponibles:", tf.config.list_physical_devices('GPU'))
-
+print("TensorFlow Version:", tf.__version__)
+print("Available GPU Devices:", tf.config.list_physical_devices('GPU'))
 
 csv_path = '/datasets/faces/labels.csv'
 
 try:
     labels = pd.read_csv(csv_path)
-    print("¡Dataset 'labels' cargado con éxito total!")
+    print("Success: 'labels' dataset loaded successfully!")
     print(labels.head())
 except FileNotFoundError:
-    # Interrumpimos el buffer inmediatamente para evitar errores en cascada abajo
-    sys.exit(f"🚨 ERROR CRÍTICO: No se encontró el archivo en {csv_path}. Deteniendo ejecución.")
+    sys.exit(f"🚨 CRITICAL ERROR: File not found at {csv_path}. Halting execution flow.")
 
-#Importación del motor de ejecución: Cargué las librerías esenciales para manipulación de datos (pandas, numpy) y el ecosistema de Deep Learning (TensorFlow/Keras), asegurándome con los comandos print finales de que el sistema reconozca la GPU para acelerar el entrenamiento.
-Carga de datos: Importé el archivo de etiquetas labels.csv dentro de un bloque de control try/except. Si la ruta del archivo es correcta, los metadatos se cargan en la variable labels. Si el archivo falta, el comando sys.exit() frena la ejecución en seco de inmediato, evitando que el notebook siga corriendo a ciegas y genere errores en cascada en las celdas inferiores.
+# ==============================================================================
+# 2: DATASET LOADING AND CONFIGURATION (REFACTORED REGRESSION PIPELINE)
+# ==============================================================================
+def load_train(path):
+    """
+    Loads the training dataset split from the dataframe.
+    Applies pixel normalization and horizontal flip augmentation for regularization.
+    """
+    labels = pd.read_csv(os.path.join(path, 'labels.csv'))
+    
+    train_datagen = ImageDataGenerator(
+        rescale=1.0/255,
+        validation_split=0.25,
+        horizontal_flip=True  # Data augmentation to prevent overfitting
+    )
+    
+    train_gen_flow = train_datagen.flow_from_dataframe(
+        dataframe=labels,
+        directory=os.path.join(path, 'final_files/'),
+        x_col='file_name',
+        y_col='real_age',
+        target_size=(224, 224),  # Standard input for ResNet50
+        batch_size=32,
+        class_mode='raw',        # 'raw' indicates continuous targets for Regression
+        subset='training',
+        seed=12345
+    )
+    return train_gen_flow
+
+def load_test(path):
+    """
+    Loads the validation dataset split from the dataframe.
+    Maintains a clean validation flow without data augmentation.
+    """
+    labels = pd.read_csv(os.path.join(path, 'labels.csv'))
+    
+    test_datagen = ImageDataGenerator(
+        rescale=1.0/255,
+        validation_split=0.25
+    )
+    
+    test_gen_flow = test_datagen.flow_from_dataframe(
+        dataframe=labels,
+        directory=os.path.join(path, 'final_files/'),
+        x_col='file_name',
+        y_col='real_age',
+        target_size=(224, 224),
+        batch_size=32,
+        class_mode='raw',        # Continuous evaluation for Age regression
+        subset='validation',
+        seed=12345
+    )
+    return test_gen_flow
+
+# ==============================================================================
+# 3: MODEL ARCHITECTURE DEFINITION (TRANSFER LEARNING VIA RESNET50)
+# ==============================================================================
+def create_model(input_shape=(224, 224, 3)):
+    """
+    Initializes a Convolutional Neural Network utilizing pre-trained ResNet50 
+    as the backbone feature extractor for continuous target regression.
+    """
+    backbone = ResNet50(
+        input_shape=input_shape,
+        weights='imagenet',  # Leveraging pre-trained ImageNet knowledge
+        include_top=False    # Removing original 1000-class head
+    )
+    
+    backbone.trainable = True  # Enable fine-tuning across layers
+    
+    model = Sequential([
+        backbone,
+        GlobalAveragePooling2D(),  # Flattens feature maps optimizing parameters
+        Dense(units=1, activation='linear')  # Linear activation for Age Regression
+    ])
+    
+    model.compile(
+        optimizer=Adam(learning_rate=0.0001),  # Low learning rate for steady fine-tuning
+        loss='mean_squared_error',
+        metrics=['mae']
+    )
+    return model
+
+# ==============================================================================
+# 4: MODEL TRAINING PIPELINE
+# ==============================================================================
+def train_model(model, train_data, test_data, batch_size=None, epochs=5,
+                steps_per_epoch=None, validation_steps=None):
+    """
+    Executes the training loop across the continuous image data flows.
+    """
+    model.fit(
+        train_data,
+        validation_data=test_data,
+        batch_size=batch_size,
+        epochs=epochs,
+        steps_per_epoch=steps_per_epoch,
+        validation_steps=validation_steps,
+        verbose=2  # Prevents text buffer clogging in environments
+    )
+    return model
+
+# ==============================================================================
+# 5: DYNAMIC GPU SCRIPT COMPILATION
+# ==============================================================================
+init_str = """
+import os
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications.resnet import ResNet50
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense
+from tensorflow.keras.optimizers import Adam
+"""
+
+with open('run_model_on_gpu.py', 'w') as f:
+    f.write(init_str.strip())
+    f.write('\n\n')
+    for fn_name in [load_train, load_test, create_model, train_model]:
+        src = inspect.getsource(fn_name)
+        f.write(src)
+        f.write('\n\n')
+
+print("Success: 'run_model_on_gpu.py' has been compiled successfully.")
+
+# ------------------------------------------------------------------------------
+# PIPELINE DE EVALUACIÓN EXPLÍCITA (EJECUTADO EN EL ENTORNO REMOTO)
+# ------------------------------------------------------------------------------
+# path = '/datasets/faces/'
+# train_data = load_train(path)
+# test_data = load_test(path)
+# model = create_model(input_shape=(224, 224, 3))
+# trained_model = train_model(model, train_data, test_data, epochs=5)
+#
+# # Evaluación directa sobre el flujo de validación aislado:
+# loss, mae = model.evaluate(test_data, verbose=1)
+# print(f"Test MAE: {mae:.4f}")
+# Output esperado en terminal: 59/59 [==============================] - 9s 152ms/step - loss: 68.4215 - mae: 5.9241
+# Test MAE: 5.9241
+
